@@ -26,6 +26,17 @@ app.post("/todos", async (req, res) => {
   }
 });
 
+// route to get all todos
+app.get("/todos", async (req, res) => {
+  try {
+    const allTodos = await pool.query("SELECT * from todos");
+    res.json(allTodos.rows);
+  } catch (error) {
+    console.log((error as Error).message);
+    res.status(500).send("Error fetching todos");
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
