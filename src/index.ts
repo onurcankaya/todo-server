@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
-
+import bcrypt from "bcryptjs";
+import jws from "jsonwebtoken";
+import * as dotenv from "dotenv";
 import pool from "./db";
 
 const app = express();
@@ -8,6 +10,38 @@ const port = 3000;
 
 app.use(cors());
 app.use(express.json());
+
+dotenv.config();
+
+const jwtSecret = process.env.JWT_SECRET;
+
+// route to register a new user
+app.post("/register", async (req, res) => {
+  const { username, email, password } = req.body;
+
+  try {
+    const userExists = await pool.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (userExists.rows.length > 0) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await pool.query(
+      "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING *",
+      [username, email, hashedPassword]
+    );
+
+    res.status(201).json({ user: newUser.rows[0] });
+  } catch (error) {
+    console.error((error as Error).message);
+    res.status(500).send("Error registering user");
+  }
+});
 
 // route to add a new todo
 app.post("/todos", async (req, res) => {
@@ -19,7 +53,7 @@ app.post("/todos", async (req, res) => {
       [title, description]
     );
 
-    res.status(200).json(newTodo.rows[0]);
+    res.status(201).json(newTodo.rows[0]);
   } catch (error) {
     console.error((error as Error).message);
     res.status(500).send("Error creating todo");
