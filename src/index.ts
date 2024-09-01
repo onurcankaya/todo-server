@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
-import jws from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 import * as dotenv from "dotenv";
 import pool from "./db";
 
@@ -15,17 +15,20 @@ dotenv.config();
 
 const jwtSecret = process.env.JWT_SECRET;
 
+if (!jwtSecret) {
+  throw new Error("JWT_SECRET environment variable is not set");
+}
+
 // route to register a new user
 app.post("/register", async (req, res) => {
   const { username, email, password } = req.body;
 
   try {
-    const userExists = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email]
-    );
+    const user = await pool.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
 
-    if (userExists.rows.length > 0) {
+    if (user.rows.length > 0) {
       return res.status(400).json({ message: "User already exists" });
     }
 
@@ -40,6 +43,39 @@ app.post("/register", async (req, res) => {
   } catch (error) {
     console.error((error as Error).message);
     res.status(500).send("Error registering user");
+  }
+});
+
+// route to login user
+app.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // check if a user with the email exists
+    const user = await pool.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
+
+    if (user.rows.length === 0) {
+      return res.status(400).json({ message: "Email is not registered" });
+    }
+
+    // check if password is correct
+    const isMatch = await bcrypt.compare(password, user.rows[0].password);
+
+    if (!isMatch) {
+      return res.status(400).json({ message: "Wrong password" });
+    }
+
+    // create and send JWT
+    const token = jwt.sign({ userId: user.rows[0].id }, jwtSecret, {
+      expiresIn: "1h",
+    });
+
+    res.status(200).json({ token });
+  } catch (error) {
+    console.error((error as Error).message);
+    res.status(500).send("Error logging in");
   }
 });
 
