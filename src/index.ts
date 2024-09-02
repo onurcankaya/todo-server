@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -19,8 +19,28 @@ if (!jwtSecret) {
   throw new Error("JWT_SECRET environment variable is not set");
 }
 
+const authenticateUser = (req: Request, res: Response, next: NextFunction) => {
+  const token = req.header("Authorization")?.replace("Bearer ", "");
+
+  if (!token) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, jwtSecret) as {
+      userId: string;
+    };
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ message: "Invalid token" });
+  }
+};
+
+app.use("/todos", authenticateUser);
+
 // route to register a new user
-app.post("/register", async (req, res) => {
+app.post("/register", async (req: Request, res: Response) => {
   const { username, email, password } = req.body;
 
   try {
@@ -46,8 +66,8 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// route to login user
-app.post("/login", async (req, res) => {
+// route to login a user
+app.post("/login", async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   try {
@@ -64,7 +84,7 @@ app.post("/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.rows[0].password);
 
     if (!isMatch) {
-      return res.status(400).json({ message: "Wrong password" });
+      return res.status(400).json({ message: "Incorrect password" });
     }
 
     // create and send JWT
@@ -80,13 +100,14 @@ app.post("/login", async (req, res) => {
 });
 
 // route to add a new todo
-app.post("/todos", async (req, res) => {
+app.post("/todos", authenticateUser, async (req: Request, res: Response) => {
   const { title, description } = req.body;
+  const userId = req.user?.userId;
 
   try {
     const newTodo = await pool.query(
-      "INSERT INTO todos (title, description) VALUES ($1, $2) RETURNING *",
-      [title, description]
+      "INSERT INTO todos (title, description, userId) VALUES ($1, $2, $3) RETURNING *",
+      [title, description, userId]
     );
 
     res.status(201).json(newTodo.rows[0]);
@@ -97,48 +118,61 @@ app.post("/todos", async (req, res) => {
 });
 
 // route to get all todos
-app.get("/todos", async (req, res) => {
+app.get("/todos", authenticateUser, async (req: Request, res: Response) => {
+  const userId = req.user?.userId;
+
   try {
-    const allTodos = await pool.query("SELECT * from todos");
+    const allTodos = await pool.query("SELECT * from todos WHERE userId = $1", [
+      userId,
+    ]);
     res.status(200).json(allTodos.rows);
   } catch (error) {
-    console.log((error as Error).message);
+    console.error((error as Error).message);
     res.status(500).send("Error fetching todos");
   }
 });
 
 // route to delete a todo
-app.delete("/todos/:id", async (req, res) => {
-  const { id } = req.params;
+app.delete(
+  "/todos/:id",
+  authenticateUser,
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.user?.userId;
 
-  const result = await pool.query(
-    "DELETE FROM todos WHERE id = $1 RETURNING *",
-    [id]
-  );
+    const result = await pool.query(
+      "DELETE FROM todos WHERE id = $1 AND userId = $2 RETURNING *",
+      [id, userId]
+    );
 
-  if (result.rowCount === 0) {
-    return res.status(404).json({ message: "Todo not found" });
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        message:
+          "Todo not found or you do not have permission to delete this todo",
+      });
+    }
+
+    res
+      .status(200)
+      .json({ message: "Todo deleted successfully", todo: result.rows[0] });
+
+    try {
+    } catch (error) {
+      console.error((error as Error).message);
+      res.status(500).json({ message: "Error deleting todo" });
+    }
   }
-
-  res
-    .status(200)
-    .json({ message: "Todo deleted successfully", todo: result.rows[0] });
-
-  try {
-  } catch (error) {
-    console.error((error as Error).message);
-    res.status(500).json({ message: "Error deleting todo" });
-  }
-});
+);
 
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
 
 // route to update a todo
-app.put("/todos/:id", async (req, res) => {
+app.put("/todos/:id", authenticateUser, async (req: Request, res: Response) => {
   const { id } = req.params;
   const { title, description, is_completed } = req.body;
+  const userId = req.user?.userId;
 
   try {
     const result = await pool.query(
@@ -147,10 +181,10 @@ app.put("/todos/:id", async (req, res) => {
           description = COALESCE($2, description),
           is_completed = COALESCE($3, is_completed),
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
+      WHERE id = $4 AND userId = $5
       RETURNING *
       `,
-      [title, description, is_completed, id]
+      [title, description, is_completed, id, userId]
     );
 
     if (result.rowCount === 0) {
