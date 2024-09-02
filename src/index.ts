@@ -27,10 +27,9 @@ const authenticateUser = (req: Request, res: Response, next: NextFunction) => {
   }
 
   try {
-    const decoded = jwt.verify(token, jwtSecret) as {
-      userId: string;
-    };
+    const decoded = jwt.verify(token, jwtSecret) as { userId: string };
     req.user = decoded;
+
     next();
   } catch (error) {
     res.status(401).json({ message: "Invalid token" });
@@ -92,7 +91,10 @@ app.post("/login", async (req: Request, res: Response) => {
       expiresIn: "1h",
     });
 
-    res.status(200).json({ token });
+    res.status(200).json({
+      user: { email: user.rows[0].email, username: user.rows[0].username },
+      token,
+    });
   } catch (error) {
     console.error((error as Error).message);
     res.status(500).send("Error logging in");
@@ -125,6 +127,7 @@ app.get("/todos", authenticateUser, async (req: Request, res: Response) => {
     const allTodos = await pool.query("SELECT * from todos WHERE userId = $1", [
       userId,
     ]);
+
     res.status(200).json(allTodos.rows);
   } catch (error) {
     console.error((error as Error).message);
